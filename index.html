@@ -1,0 +1,333 @@
+<!doctype html> 
+<html lang="en"> 
+<head> 
+    <meta charset="UTF-8" />
+    <title>Travelling Salesman</title>
+    <script src="//cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.js"></script>
+    <style type="text/css">
+        body {
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+
+<script type="text/javascript">
+
+const config = {
+    type: Phaser.AUTO,
+    width: 800,
+    height: 600,
+    physics: {
+        default: 'arcade',
+        arcade: {
+            gravity: { x: 0, y: 0 },
+            debug: false
+        }
+    },
+    scene: {
+        preload: preload,
+        create: create,
+        update: update
+    },
+    scale: {
+        mode: Phaser.Scale.FIT
+    }
+};
+
+const game = new Phaser.Game(config);
+
+let bounds;
+let children;
+let computerDistance;
+let cursors;
+let defaultScene;
+let engine;
+let finished = false;
+let graphics;
+let index = 0;
+let N = 3;
+let orderedPoints;
+let path;
+let pathOptimal;
+let player;
+let playerDistance;
+let playerFinished = false;
+let points = [];
+let pointsGroup;
+let text1;
+let text2;
+let textTween1;
+let textTween2;
+let threshold = 10;
+let tween;
+let visitedPoints = [];
+
+function preload() {
+    this.load.image('player', 'assets/truck.png');
+    this.load.image('computer', 'assets/truck2.png');
+    this.load.image('dropoff', 'assets/house.png');
+    this.load.image('background', 'assets/map.png');
+    this.load.audio('engine', 'assets/engine.wav');
+    defaultScene = this;
+}
+
+function create() {
+    this.add.image(config.width / 2, config.height / 2, 'background');
+    bounds = new Phaser.Geom.Rectangle(50, 50, 700, 500);
+    text1 = defaultScene.add.text(30, 20, 'Player: 0', { font: '16px Courier', fill: '#00ff00' });
+    text2 = defaultScene.add.text(30, 40, 'Computer: 0', { font: '16px Courier', fill: '#00ff00' });
+    // engine = this.sound.add('engine', { loop: true, volume: 0.25 });
+
+    textTween1 = defaultScene.tweens.addCounter({
+        from: 0,
+        to: 0,
+        paused: true,
+        duration: 10000,
+        // onStart: () => { engine.play() },
+        onComplete: () => {
+            playerFinished = true;
+        }
+    });
+
+    textTween2 = defaultScene.tweens.addCounter({
+        from: 0,
+        to: 0,
+        paused: true,
+        delay: 10000,
+        duration: 10000,
+        onComplete: () => {
+            finished = false;
+            playAgain();
+        }
+    });
+
+    pointsGroup = this.physics.add.staticGroup({
+        key: 'dropoff',
+        frameQuantity: N,
+        immovable: true
+    });
+
+    children = pointsGroup.getChildren();
+
+    for (let i = 0; i < N; i++) {
+        let x = bounds.getRandomPoint().x;
+        let y = bounds.getRandomPoint().y;
+        let currentXs = Object.values(points);
+        let currentYs = Object.values(points);
+        let xProximities = currentXs.map(val => Math.abs(val.x - x) < threshold);
+        let yProximities = currentYs.map(val => Math.abs(val.y - y) < threshold);
+        while (xProximities.includes(true) || yProximities.includes(true)) {
+            x = bounds.getRandomPoint().x;
+            y = bounds.getRandomPoint().y;
+            xProximities = currentXs.map(val => Math.abs(val.x - x) < threshold);
+            yProximities = currentYs.map(val => Math.abs(val.y - y) < threshold);
+        }
+        points.push(new Point(x, y));
+        children[i].setPosition(x, y);
+        children[i].setInteractive();
+        children[i].on('pointerdown', function visited() {
+            if (!children[i].clicked) {
+                children[i].setTint(0x7a7a7a);
+                visitedPoints.push({ x: children[i].x, y: children[i].y });
+                visitedPoints.length == N && gameOver();
+            }
+
+            children[i].clicked = true;
+        });
+    }
+
+    pointsGroup.refresh();
+    graphics = this.add.graphics();
+    
+    let buttonStyle = {
+        backgroundColor: '#0f0',
+        color: 'black',
+        padding: 32,
+        fontSize: 32,
+    };
+
+    nextLevelButton = this.add.text(300, 260, 'Next Level', buttonStyle)
+        .setVisible(false)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', function nextLevel() {
+            N += 1;
+            orderedPoints = [];
+            visitedPoints = [];
+            points = [];
+            playerFinished = false;
+            defaultScene.scene.restart();
+        });
+
+    restartButton = this.add.text(300, 260, 'Play Again', buttonStyle)
+        .setVisible(false)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => location.reload());
+}
+
+function update() {
+    if (finished) {
+        textTween1.data[0].end = playerDistance;
+        textTween2.data[0].end = computerDistance;
+        !playerFinished && textTween1.resume();
+        textTween2.resume();
+        text1.setText('Player: ' + Math.round(textTween1.getValue() / 5) * 5);     
+        text2.setText('Computer: ' + Math.round(textTween2.getValue() / 5) * 5);
+    }
+}
+
+function gameOver() {
+    children.forEach(child => child.clearTint());
+    visitedPoints.push({ x: visitedPoints[0].x, y: visitedPoints[0].y });
+    let solution = solve(points);
+    orderedPoints = solution.map(i => points[i]);
+    orderedPoints.push(new Point(orderedPoints[0].x, orderedPoints[0].y));
+    playerDistance = Math.floor(totalDistance(visitedPoints) / 5) * 5;
+    computerDistance = Math.floor(totalDistance(orderedPoints) / 5) * 5;
+    let psOptimal = Object.values(orderedPoints);
+    pathOptimal = new Phaser.Curves.Spline(psOptimal);
+    let ps = Object.values(visitedPoints);
+    path = new Phaser.Curves.Spline(ps);
+    // graphics.lineStyle(1, 0xffffff, 0.5);
+    // graphics.lineStyle(1, 0x7E0, 0.5);
+    // pathOptimal.draw(graphics, N);
+    player = defaultScene.add.follower(path, visitedPoints[0].x, visitedPoints[0].y, 'player');
+    // path.draw(graphics, N);
+    let computer = defaultScene.add.follower(pathOptimal, orderedPoints[0].x, orderedPoints[0].y, 'computer');
+    finished = true;
+    player.startFollow({ duration: 10000, rotateToPath: true, ease: false });
+    setTimeout(() => {
+        computer.startFollow({ duration: 10000, rotateToPath: true, ease: false });
+    }, 10000);
+}
+
+function playAgain() {
+    playerDistance <= computerDistance && nextLevelButton.setVisible(true);
+    playerDistance > computerDistance && restartButton.setVisible(true);
+    // engine.pause();
+}
+
+function totalDistance(ps) {
+    let n = ps.length;
+    let ds = [];
+    for (let i = 0; i < n; i++) {
+        if (i < n - 1) {
+            ds.push(Math.sqrt(((ps[i].x - ps[i + 1].x) ** 2) + ((ps[i].y - ps[i + 1].y) ** 2)))
+        }
+    }
+    return ds.reduce((acc, val) => acc + val, 0)
+}
+
+function euclidean(p, q) {
+    let dx = p.x - q.x, dy = p.y - q.y;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+function solve(points, temp_coeff = 0.999, callback, distance = euclidean) {
+    let path = new Path(points, distance);
+    // Optimization: If there is only one point in the list, there is no path.
+    if (points.length < 2) return path.order;
+    // Optimization: If the user would provide a bad input, end immediately.
+    if (temp_coeff >= 1 || temp_coeff <= 0) return path.order;
+
+    // Create a temperature coefficient.
+    if (!temp_coeff)
+        temp_coeff = 1 - Math.exp(-10 - Math.min(points.length, 1e6) / 1e5);
+    let hasCallback = typeof (callback) === "function";
+
+    for (let temperature = 100 * distance(path.access(0), path.access(1));
+        temperature > 1e-6;
+        temperature *= temp_coeff) {
+        path.change(temperature);
+        if (hasCallback) callback(path.order);
+    }
+    return path.order;
+};
+
+function Point(x, y) {
+    this.x = x;
+    this.y = y;
+};
+
+function Path(points, distanceFunc) {
+    this.points = points;
+    this.distanceFunc = distanceFunc;
+    this.initializeOrder();
+    this.initializeDistances();
+}
+
+Path.prototype.initializeOrder = function () {
+    // A loop is about 3x faster than using a spread operator.
+    this.order = new Array(this.points.length);
+    for (let i = 0; i < this.order.length; i++) this.order[i] = i;
+};
+
+Path.prototype.initializeDistances = function () {
+    this.distances = new Array(this.points.length * this.points.length);
+    for (let i = 0; i < this.points.length; i++) {
+        // Optimization: Starting at i+1 avoids repeats and identity distances.
+        // We just need to make sure we don't access the empty cells later.
+        for (let j = i + 1; j < this.points.length; j++) {
+            this.distances[j + i * this.points.length] = this.distanceFunc(this.points[i], this.points[j]);
+        }
+    }
+};
+
+Path.prototype.change = function (temp) {
+    let i = this.randomPos(), j = this.randomPos();
+    let delta = this.delta_distance(i, j);
+    if (delta < 0 || Math.random() < Math.exp(-delta / temp)) {
+        this.swap(i, j);
+    }
+};
+
+Path.prototype.swap = function (i, j) {
+    let tmp = this.order[i];
+    this.order[i] = this.order[j];
+    this.order[j] = tmp;
+};
+
+Path.prototype.delta_distance = function (i, j) {
+    let jm1 = this.index(j - 1),
+        jp1 = this.index(j + 1),
+        im1 = this.index(i - 1),
+        ip1 = this.index(i + 1);
+    let s =
+        this.distance(jm1, i)
+        + this.distance(i, jp1)
+        + this.distance(im1, j)
+        + this.distance(j, ip1)
+        - this.distance(im1, i)
+        - this.distance(i, ip1)
+        - this.distance(jm1, j)
+        - this.distance(j, jp1);
+    if (jm1 === i || jp1 === i)
+        s += 2 * this.distance(i, j);
+    return s;
+};
+
+Path.prototype.index = function (i) {
+    return (i + this.points.length) % this.points.length;
+};
+
+Path.prototype.access = function (i) {
+    return this.points[this.order[this.index(i)]];
+};
+
+Path.prototype.distance = function (i, j) {
+    if (i === j) return 0; // Identity.
+
+    // Ensure low is actually lower.
+    var low = this.order[i], high = this.order[j];
+    if (low > high) { low = this.order[j]; high = this.order[i]; }
+
+    return this.distances[low * this.points.length + high] || 0;
+};
+
+Path.prototype.randomPos = function () {
+    return 1 + Math.floor(Math.random() * (this.points.length - 1));
+};
+</script>
+
+</body>
+</html>
