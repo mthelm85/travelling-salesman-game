@@ -225,12 +225,9 @@ function euclidean(p, q) {
 
 function solve(points, temp_coeff = 0.999, callback, distance = euclidean) {
     let path = new Path(points, distance);
-    // Optimization: If there is only one point in the list, there is no path.
     if (points.length < 2) return path.order;
-    // Optimization: If the user would provide a bad input, end immediately.
     if (temp_coeff >= 1 || temp_coeff <= 0) return path.order;
 
-    // Create a temperature coefficient.
     if (!temp_coeff)
         temp_coeff = 1 - Math.exp(-10 - Math.min(points.length, 1e6) / 1e5);
     let hasCallback = typeof (callback) === "function";
@@ -257,7 +254,6 @@ function Path(points, distanceFunc) {
 }
 
 Path.prototype.initializeOrder = function () {
-    // A loop is about 3x faster than using a spread operator.
     this.order = new Array(this.points.length);
     for (let i = 0; i < this.order.length; i++) this.order[i] = i;
 };
@@ -265,8 +261,6 @@ Path.prototype.initializeOrder = function () {
 Path.prototype.initializeDistances = function () {
     this.distances = new Array(this.points.length * this.points.length);
     for (let i = 0; i < this.points.length; i++) {
-        // Optimization: Starting at i+1 avoids repeats and identity distances.
-        // We just need to make sure we don't access the empty cells later.
         for (let j = i + 1; j < this.points.length; j++) {
             this.distances[j + i * this.points.length] = this.distanceFunc(this.points[i], this.points[j]);
         }
@@ -315,10 +309,9 @@ Path.prototype.access = function (i) {
 };
 
 Path.prototype.distance = function (i, j) {
-    if (i === j) return 0; // Identity.
+    if (i === j) return 0;
 
-    // Ensure low is actually lower.
-    var low = this.order[i], high = this.order[j];
+    let low = this.order[i], high = this.order[j];
     if (low > high) { low = this.order[j]; high = this.order[i]; }
 
     return this.distances[low * this.points.length + high] || 0;
